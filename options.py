@@ -45,4 +45,20 @@ def parse_opts():
         help="Continue training from the last checkpoint",
     )
 
+    parser.add_argument(
+            "--pretrained_model",
+            type=str,
+            default="/data3/juliew/projet2_diffusion/consistency_models/checkpoints/",
+            help="take pre_trained model",
+            )
+    
+    parser.add_argument(
+            "--sampling_sigmas",
+            type=float,
+            nargs='+',
+            default=(80.0, 24.4, 5.84, 0.9, 0.661),
+            help="sampling noise level",
+            )
+
+
     return parser.parse_args()
