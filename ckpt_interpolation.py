@@ -1,9 +1,11 @@
 import json
 import os
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, List, Optional, Tuple, Union
 import torch
+
 torch.set_float32_matmul_precision("medium")
 from einops import rearrange
 from einops.layers.torch import Rearrange
@@ -29,22 +31,22 @@ from consistency_models.utils import update_ema_model_
 from visdom import Visdom
 import numpy as np
 import torchvision.utils as vutils
-
+import visdom
 from visdom import Visdom
-viz=Visdom(env='consistence_test_interpolation')
 
+viz = Visdom(env="consistency_test_interpolation")
 
 
 from options import parse_opts
-args = parse_opts()
 
+args = parse_opts()
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 
 
-#UNet
+# UNet
 def GroupNorm(channels: int) -> nn.GroupNorm:
     return nn.GroupNorm(num_groups=min(32, channels // 4), num_channels=channels)
 
@@ -188,6 +190,7 @@ class NoiseLevelEmbedding(nn.Module):
         h = torch.cat([torch.sin(h), torch.cos(h)], dim=-1)
 
         return self.projection(h)
+
 
 @dataclass
 class UNetConfig:
@@ -361,49 +364,41 @@ class UNet(nn.Module):
             dropout,
         )
 
-    def save_pretrained(self, full_model_path: str):
-        # Extract the directory from the full model path
-        model_dir = os.path.dirname(full_model_path)
+    def save_pretrained(self, pretrained_path: str) -> None:
+        os.makedirs(pretrained_path, exist_ok=True)
 
-                # Ensure the directory exists
-        if not os.path.exists(model_dir):
-            os.makedirs(model_dir, exist_ok=True)
-
-        torch.save(self.state_dict(), full_model_path)
-
-        # Save the configuration alongside the model
-        config_path = os.path.join(model_dir, "config.json")
-        with open(config_path, "w") as f:
+        with open(os.path.join(pretrained_path, "config.json"), mode="w") as f:
             json.dump(asdict(self.config), f)
 
-  
-    @classmethod
-    def from_pretrained(cls, model_dir: str) -> "UNet":
-    # Load the configuration file
-        config_path = os.path.join(model_dir, "config.json")
-        with open(config_path, "r") as config_file:
-            config_dict = json.load(config_file)
-        config = UNetConfig(**config_dict)  # Create the config object
+        torch.save(self.state_dict(), os.path.join(pretrained_path, "final_model.ckpt"))
 
-    # Instantiate the model with the loaded configuration
+    @classmethod
+    def from_pretrained(cls, pretrained_path: str) -> "UNet":
+        with open(os.path.join(pretrained_path, "config.json"), mode="r") as f:
+            config_dict = json.load(f)
+        config = UNetConfig(**config_dict)
+
         model = cls(config)
 
-    # Load the model's state dictionary
-        model_path = os.path.join(model_dir, "final_model.ckpt")
-        state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+        state_dict = torch.load(
+            os.path.join(pretrained_path, "final_model.ckpt"),
+            map_location=torch.device("cpu"),
+        )
         model.load_state_dict(state_dict)
+
         return model
+
 
 summary(UNet(UNetConfig()), input_size=((1, 3, 32, 32), (1,)))
 
-unet = UNet.from_pretrained(args.pretrained_model ).eval().to(device=device, dtype=dtype)
+unet = UNet.from_pretrained(args.pretrained_model).eval().to(device=device, dtype=dtype)
 
 ##dataset
 @dataclass
 class ImageDataModuleConfig:
-    data_dir: str 
+    data_dir: str
     image_size: Tuple[int, int]
-    batch_size: int 
+    batch_size: int
     num_workers: int
     pin_memory: bool = True
     persistent_workers: bool = True
@@ -437,38 +432,128 @@ class ImageDataModule(LightningDataModule):
         )
 
 
+vis = visdom.Visdom()
+
+# Clear all existing windows by closing the Visdom connection
+vis.close()
+
+# Create a new Visdom server connection
+vis = visdom.Visdom()
+
 dm_config = ImageDataModuleConfig(
-    data_dir=args.data_dir, 
+    data_dir=args.data_dir,
     image_size=tuple(args.image_size),
     batch_size=args.batch_size,
-    num_workers=args.num_workers
+    num_workers=args.num_workers,
 )
 
 dm = ImageDataModule(dm_config)
 dm.setup()
 
+
 batch, _ = next(iter(dm.train_dataloader()))
 batch = batch.to(device=device, dtype=dtype)
-viz.images( vutils.make_grid(batch.to(dtype=torch.float32), normalize=True), nrow=1, win='rescale_imag_grid', opts=dict(title='Rescal_Imags_grid',caption='ReImags_grid',width=300,height=300 ))
+viz.images(
+    vutils.make_grid(batch.to(dtype=torch.float32), normalize=True),
+    nrow=1,
+    win="batch_image",
+    opts=dict(title="batch_image", caption="batch_image", width=300, height=300),
+)
 
-#interpolation
+# interpolation
 consistency_sampling_and_editing = ConsistencySamplingAndEditing()
 
 batch_a = batch.clone()
-batch_b = torch.flip(batch, dims=(0,))
-batch_a_b = torch.cat((batch_a,batch_b), dim=0).float().cpu() 
-viz.images( vutils.make_grid(batch_a_b.to(dtype=torch.float32), normalize=True), nrow=1, win='batched_imag_grid', opts=dict(title='Rescale_batchIn_grid',caption='ReImags_batchIn_grid',width=300,height=300 ))
+batch_b = torch.flip(batch, dims=[0])
+batch_a_b = torch.cat((batch_a, batch_b), dim=0).float().cpu()
+print(f"print batch_a shape {batch_a.shape}")
+print(f"print batch_b shape {batch_b.shape}")
+print(f"print batch_a_b shape {batch_a_b.shape}")
 
+viz.images(
+    vutils.make_grid(batch_a_b.to(dtype=torch.float32), normalize=True),
+    nrow=1,
+    win="batch_aclone_bflip",
+    opts=dict(
+        title="batch_aclone_bflipAB",
+        caption="batch_aclone_bflip",
+        width=300,
+        height=300,
+    ),
+)
 
+# print(f"difference between batch_a batch_b { ((batch_a - batch_b) !=0).nonzero() }")
 with torch.no_grad():
     interpolated_batch = consistency_sampling_and_editing.interpolate(
         unet,
         batch_a,
         batch_b,
         ab_ratio=0.5,
-        sigmas=[5.23, 2.25],
+        sigmas=[80.0, 24.4, 5.84, 0.9, 0.661],
         clip_denoised=True,
         verbose=True,
     )
-interpolation= torch.cat((batch_a,batch_b, interpolated_batch), dim=0).float().cpu() 
-viz.images( vutils.make_grid(interpolation.to(dtype=torch.float32), normalize=True), nrow=1, win='interpolated_imag_grid', opts=dict(title='Rescale_Interpolation_grid',caption='ReImags_Interpolation_grid',width=300,height=300 ))
+
+print(f"interpolate_sing shape {interpolated_batch.shape}")
+interpolation = torch.cat((batch_a, batch_b, interpolated_batch), dim=0).float().cpu()
+viz.images(
+    vutils.make_grid(interpolation.to(dtype=torch.float32), normalize=True, nrow=7),
+    win="interpolation_a_b",
+    opts=dict(
+        title="interpolation_a_b", caption="interpolation_a_b", width=300, height=300
+    ),
+)
+
+with torch.no_grad():
+    ab_ratios = [0.1, 0.3, 0.5, 0.7, 0.9]  # Example ratios for interpolation
+    interpolated_images = consistency_sampling_and_editing.interpolate_multiple(
+        unet,
+        batch_a,
+        batch_b,
+        ab_ratios=ab_ratios,
+        sigmas=[80.0, 24.4, 5.84, 0.9, 0.661],
+        # sigmas=[80,24,37,5.8, 0.11],
+        clip_denoised=True,
+        verbose=True,
+    )
+
+print(f"shape of interpolated_images {interpolated_images.shape}")
+
+
+# Assuming batch_a and interpolated_images are your input tensors
+batch_size = batch_a.size(0)
+sequences = []
+
+# Process each item in the batch
+for i in range(batch_size):
+    # Get the corresponding interpolated images for this batch item
+    interpolated_for_batch_item = interpolated_images[:, i]  # Shape: [5, 3, 32, 32]
+
+    # Get the start and end image from batch_a for this batch item
+    batch_a_image = batch_a[i].unsqueeze(0)  # Shape: [1, 3, 32, 32]
+    batch_b_image = batch_b[i].unsqueeze(0)  # Shape: [1, 3, 32, 32]
+
+    # Concatenate the sequence for this batch item
+    sequence = torch.cat(
+        [batch_a_image, interpolated_for_batch_item, batch_b_image], dim=0
+    )  # Shape: [7, 3, 32, 32]
+
+    # Append to list of sequences
+    sequences.append(sequence)
+
+# Concatenate all sequences along the batch dimension
+# This will make a tall tensor where each sequence is after the other
+interpolation_multip = torch.cat(sequences, dim=0)  # Shape: [batch_size * 7, 3, 32, 32]
+
+viz.images(
+    vutils.make_grid(
+        interpolation_multip.to(dtype=torch.float32), normalize=True, nrow=7
+    ),
+    win="interpolation_multip_a_b",
+    opts=dict(
+        title="interpolation_multip_a_b",
+        caption="interpolation_multip_a_b",
+        width=300,
+        height=300,
+    ),
+)

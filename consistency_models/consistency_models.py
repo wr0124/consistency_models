@@ -9,6 +9,9 @@ from tqdm.auto import tqdm
 from .utils import pad_dims_like
 
 
+from typing import List
+
+
 def timesteps_schedule(
     current_training_step: int,
     total_training_steps: int,
@@ -728,3 +731,38 @@ class ConsistencySamplingAndEditing:
         inverse_transform_fn: Callable[[Tensor], Tensor] = lambda x: x,
     ) -> Tensor:
         return inverse_transform_fn(transform_fn(y) * (1.0 - mask) + x * mask)
+
+    def interpolate_multiple(
+        self,
+        model: nn.Module,
+        a: Tensor,
+        b: Tensor,
+        ab_ratios: List[float],  # This takes a list of ratios
+        sigmas: List[Union[Tensor, float]],
+        clip_denoised: bool = False,
+        verbose: bool = False,
+        **kwargs: Any,
+    ) -> Tensor:
+
+        """
+        Interpolates multiple images between a and b using different ratios.
+        Returns a single tensor stacking all interpolated images.
+        """
+        interpolations = []
+
+        # Loop over each ratio and perform interpolation
+        for ratio in ab_ratios:
+            interpolated = self.interpolate(
+                model=model,
+                a=a,
+                b=b,
+                ab_ratio=ratio,
+                sigmas=sigmas,
+                clip_denoised=clip_denoised,
+                verbose=verbose,
+                **kwargs,
+            )
+            interpolations.append(interpolated)
+
+        # Stack all interpolated tensors into a single tensor
+        return torch.stack(interpolations, dim=0)

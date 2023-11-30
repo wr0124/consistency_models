@@ -1,9 +1,11 @@
 import json
 import os
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, List, Optional, Tuple, Union
 import torch
+
 torch.set_float32_matmul_precision("medium")
 from einops import rearrange
 from einops.layers.torch import Rearrange
@@ -31,7 +33,8 @@ import numpy as np
 import torchvision.utils as vutils
 
 from visdom import Visdom
-viz=Visdom(env='consistence_test_sampling')
+
+viz = Visdom(env="consistency_test_sampling")
 
 
 from options import parse_opts
@@ -43,7 +46,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 
 
-#UNet
+# UNet
 def GroupNorm(channels: int) -> nn.GroupNorm:
     return nn.GroupNorm(num_groups=min(32, channels // 4), num_channels=channels)
 
@@ -188,6 +191,7 @@ class NoiseLevelEmbedding(nn.Module):
 
         return self.projection(h)
 
+
 @dataclass
 class UNetConfig:
     channels: int = 3
@@ -204,9 +208,8 @@ class UNetConfig:
     mid_blocks_dropout: Tuple[float, ...] = (0.0, 0.3)
 
 
-
 class UNet(nn.Module):
-    def __init__(self, config: UNetConfig ,  checkpoint_dir: str="") -> None:
+    def __init__(self, config: UNetConfig, checkpoint_dir: str = "") -> None:
         super().__init__()
 
         self.config = config
@@ -366,7 +369,7 @@ class UNet(nn.Module):
         # Extract the directory from the full model path
         model_dir = os.path.dirname(full_model_path)
 
-                # Ensure the directory exists
+        # Ensure the directory exists
         if not os.path.exists(model_dir):
             os.makedirs(model_dir, exist_ok=True)
 
@@ -377,34 +380,34 @@ class UNet(nn.Module):
         with open(config_path, "w") as f:
             json.dump(asdict(self.config), f)
 
-   
     @classmethod
     def from_pretrained(cls, model_dir: str) -> "UNet":
-    # Load the configuration file
+        # Load the configuration file
         config_path = os.path.join(model_dir, "config.json")
         with open(config_path, "r") as config_file:
             config_dict = json.load(config_file)
         config = UNetConfig(**config_dict)  # Create the config object
 
-    # Instantiate the model with the loaded configuration
+        # Instantiate the model with the loaded configuration
         model = cls(config)
 
-    # Load the model's state dictionary
+        # Load the model's state dictionary
         model_path = os.path.join(model_dir, "final_model.ckpt")
         state_dict = torch.load(model_path, map_location=torch.device("cpu"))
         model.load_state_dict(state_dict)
         return model
 
+
 summary(UNet(UNetConfig()), input_size=((1, 3, 32, 32), (1,)))
 
-unet = UNet.from_pretrained(args.pretrained_model ).eval().to(device=device, dtype=dtype)
+unet = UNet.from_pretrained(args.pretrained_model).eval().to(device=device, dtype=dtype)
 
 ##dataset
 @dataclass
 class ImageDataModuleConfig:
-    data_dir: str 
+    data_dir: str
     image_size: Tuple[int, int]
-    batch_size: int 
+    batch_size: int
     num_workers: int
     pin_memory: bool = True
     persistent_workers: bool = True
@@ -437,11 +440,12 @@ class ImageDataModule(LightningDataModule):
             persistent_workers=self.config.persistent_workers,
         )
 
+
 dm_config = ImageDataModuleConfig(
-    data_dir=args.data_dir, 
+    data_dir=args.data_dir,
     image_size=tuple(args.image_size),
     batch_size=args.batch_size,
-    num_workers=args.num_workers
+    num_workers=args.num_workers,
 )
 
 dm = ImageDataModule(dm_config)
@@ -449,17 +453,28 @@ dm.setup()
 
 batch, _ = next(iter(dm.train_dataloader()))
 batch = batch.to(device=device, dtype=dtype)
-viz.images( vutils.make_grid(batch.to(dtype=torch.float32), normalize=True), nrow=1, win='rescale_imag_grid', opts=dict(title='Rescal_Imags_grid',caption='ReImags_grid',width=300,height=300 ))
-#samping
+viz.images(
+    vutils.make_grid(batch.to(dtype=torch.float32), normalize=True),
+    nrow=1,
+    win="rescale_imag_grid",
+    opts=dict(title="Rescal_Imags_grid", caption="ReImags_grid", width=300, height=300),
+)
+# samping
 consistency_sampling_and_editing = ConsistencySamplingAndEditing()
 
 with torch.no_grad():
     samples = consistency_sampling_and_editing(
         unet,
         torch.randn((4, 3, 32, 32), device=device, dtype=dtype),
-        sigmas= args.sampling_sigmas,  # Use more steps for better samples e.g 2-5l
+        sigmas=args.sampling_sigmas,  # Use more steps for better samples e.g 2-5l
         clip_denoised=True,
         verbose=True,
     )
-viz.images( vutils.make_grid(samples.to(dtype=torch.float32), normalize=True), nrow=1, win='samplling_imag', opts=dict(title='sampling_Imags',caption='sampling_ReImags', width=300,height=300 ))
-
+viz.images(
+    vutils.make_grid(samples.to(dtype=torch.float32), normalize=True),
+    nrow=1,
+    win="samplling_imag",
+    opts=dict(
+        title="sampling_Imags", caption="sampling_ReImags", width=300, height=300
+    ),
+)

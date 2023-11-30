@@ -1,9 +1,9 @@
-python3 ckpt_interpolation.py  \
+python3 interpolation.py  \
 --data_dir "/data3/juliew/datasets/anime_faces" \
 --image_size 32 32 \
---batch_size 32 \
+--batch_size 4 \
 --num_workers 12 \
---max_steps 200 \
+--max_steps 50000 \
 --devices 1 \
 --sample_every_n_steps 100 \
 --pretrained_model "/data3/juliew/projet2_diffusion/consistency_models/checkpoints/anime_faces" \
