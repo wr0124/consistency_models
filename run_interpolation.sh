@@ -1,7 +1,7 @@
-python3 interpolation.py  \
+python3 ckpt_interpolation.py  \
 --data_dir "/data3/juliew/datasets/anime_faces" \
 --image_size 32 32 \
---batch_size 4 \
+--batch_size 12 \
 --num_workers 12 \
 --max_steps 50000 \
 --devices 1 \

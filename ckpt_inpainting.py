@@ -461,7 +461,9 @@ viz.images(
 
 # inpainting
 consistency_sampling_and_editing = ConsistencySamplingAndEditing()
-random_erasing = T.RandomErasing(p=1.0, scale=(0.2, 0.5), ratio=(0.5, 0.5))
+random_erasing = T.RandomErasing(
+    p=1.0, scale=(0.2, 0.5), ratio=(0.5, 0.5), inplace=True
+)
 masked_batch = random_erasing(batch)
 mask = torch.logical_not(batch == masked_batch)
 

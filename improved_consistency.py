@@ -248,7 +248,7 @@ class UNetConfig:
 
 
 class UNet(nn.Module):
-    def __init__(self, config: UNetConfig ,  checkpoint_dir: str="") -> None:
+    def __init__(self, config: UNetConfig, checkpoint_dir: str = "") -> None:
         super().__init__()
 
         self.config = config
@@ -408,7 +408,7 @@ class UNet(nn.Module):
         # Extract the directory from the full model path
         model_dir = os.path.dirname(full_model_path)
 
-                # Ensure the directory exists
+        # Ensure the directory exists
         if not os.path.exists(model_dir):
             os.makedirs(model_dir, exist_ok=True)
 
@@ -419,23 +419,24 @@ class UNet(nn.Module):
         with open(config_path, "w") as f:
             json.dump(asdict(self.config), f)
 
-  
     @classmethod
     def from_pretrained(cls, model_dir: str) -> "UNet":
-    # Load the configuration file
+        # Load the configuration file
         config_path = os.path.join(model_dir, "config.json")
         with open(config_path, "r") as config_file:
             config_dict = json.load(config_file)
         config = UNetConfig(**config_dict)  # Create the config object
 
-    # Instantiate the model with the loaded configuration
+        # Instantiate the model with the loaded configuration
         model = cls(config)
 
-    # Load the model's state dictionary
+        # Load the model's state dictionary
         model_path = os.path.join(model_dir, "final_model.ckpt")
         state_dict = torch.load(model_path, map_location=torch.device("cpu"))
         model.load_state_dict(state_dict)
         return model
+
+
 # summary(UNet(UNetConfig()), input_size=((1, 3, 32, 32), (1,)))
 
 # LitUNet
@@ -447,7 +448,7 @@ class LitImprovedConsistencyModelConfig:
     lr_scheduler_start_factor: float = 1e-5
     lr_scheduler_iters: int = 10_000
     sample_every_n_steps: int = 100
-    num_samples: int = 4
+    num_samples: int = 32
     sampling_sigmas: Tuple[Tuple[int, ...], ...] = (
         (80,),
         (80.0, 0.661),
@@ -542,8 +543,31 @@ class LitImprovedConsistencyModel(LightningModule):
         # option1 for sampling
         # self.ema_model.load_state_dict(self.model.state_dict())
         for sigmas in self.config.sampling_sigmas:
+            random_erasing = T.RandomErasing(
+                p=1.0, scale=(0.2, 0.5), ratio=(0.5, 0.5), value=0
+            )
+            masked_batch = random_erasing(batch)
+
+            viz.images(
+                vutils.make_grid(
+                    masked_batch.to(dtype=torch.float32), normalize=True, nrow=8
+                ),
+                win=f"masked_batch sigma {sigmas}",
+                opts=dict(
+                    title=f"masked_batch {sigmas}",
+                    caption=f"masked_batch {sigmas}",
+                    width=400,
+                    height=400,
+                ),
+            )
+            mask = torch.logical_not(batch == masked_batch)
             samples = self.consistency_sampling(
-                self.model, noise, sigmas, clip_denoised=True, verbose=True
+                self.model,
+                masked_batch,
+                sigmas,
+                mask=mask.to(dtype=torch.float32),
+                clip_denoised=True,
+                verbose=True,
             )  # Generated samples
             samples = samples.clamp(min=-1.0, max=1.0)
 
@@ -553,7 +577,7 @@ class LitImprovedConsistencyModel(LightningModule):
                 f"generated_samples-sigmas={sigmas}",
                 self.global_step,
                 f"generated_samples_window_{sigmas}",
-                window_size=(200, 200),
+                window_size=(400, 400),
             )
 
     @torch.no_grad()
@@ -568,7 +592,7 @@ class LitImprovedConsistencyModel(LightningModule):
         images = images.detach().float()
 
         grid = make_grid(
-            images.clamp(-1.0, 1.0), value_range=(-1.0, 1.0), normalize=True
+            images.clamp(-1.0, 1.0), value_range=(-1.0, 1.0), normalize=True, nrow=8
         )
 
         grid = grid.cpu().numpy()
@@ -599,7 +623,7 @@ class LitImprovedConsistencyModel(LightningModule):
         self.trainer.save_checkpoint(checkpoint_path)
 
         # Save the model using only the checkpoint filename
-        #self.model.save_pretrained(checkpoint_filename)
+        # self.model.save_pretrained(checkpoint_filename)
 
         logging.info(f"Checkpoint saved: {checkpoint_path}")
         # Update the latest checkpoint symlink
@@ -645,7 +669,6 @@ def run_training(config: TrainingConfig) -> None:
     # Create data module
     dm = ImageDataModule(config.image_dm_config)
 
-
     dataset_name = os.path.basename(config.image_dm_config.data_dir.strip("/"))
 
     checkpoint_dir = config.model_ckpt_path
@@ -678,10 +701,10 @@ def run_training(config: TrainingConfig) -> None:
     lit_icm = LitImprovedConsistencyModel(
         config.consistency_training,
         config.consistency_sampling,
-        unet_config , 
+        unet_config,
         config.lit_icm_config,
         dataset_name,  # Pass dataset name here
-        checkpoint_dir  # And checkpoint directory her
+        checkpoint_dir,  # And checkpoint directory her
     )
     # Run training
     config.trainer.fit(lit_icm, dm, ckpt_path=config.resume_ckpt_path)
@@ -714,7 +737,7 @@ training_config = TrainingConfig(
     trainer=Trainer(
         max_steps=args.max_steps,
         precision="16-mixed",
-        log_every_n_steps= 100,
+        log_every_n_steps=100,
         logger=TensorBoardLogger(".", name="logs"),
         callbacks=[LearningRateMonitor(logging_interval="step")],
         accelerator="gpu",

@@ -9,7 +9,13 @@ from tqdm.auto import tqdm
 from .utils import pad_dims_like
 
 
+from torchvision import transforms as T
 from typing import List
+
+from visdom import Visdom
+import torchvision.utils as vutils
+
+viz = Visdom(env="consistency_test")
 
 
 def timesteps_schedule(
@@ -531,7 +537,15 @@ class ImprovedConsistencyTraining:
         current_sigmas = sigmas[timesteps]
         next_sigmas = sigmas[timesteps + 1]
 
+        zero_tensor = torch.zeros_like(x)
+        random_eraser = T.RandomErasing(
+            p=1, scale=(0.2, 0.4), ratio=(1.3, 3.3), value=1
+        )
+        mask = random_eraser(zero_tensor)
+
         next_noisy_x = x + pad_dims_like(next_sigmas, x) * noise
+        next_noisy_x = next_noisy_x * mask + (1 - mask) * x
+
         next_x = model_forward_wrapper(
             model,
             next_noisy_x,
@@ -540,9 +554,20 @@ class ImprovedConsistencyTraining:
             self.sigma_min,
             **kwargs,
         )
-
+        viz.images(
+            vutils.make_grid(next_x.cpu(), normalize=True, nrow=int(x.shape[0] / 4)),
+            win="consistency_test1",
+            opts=dict(
+                title="train_next_x image",
+                caption="train_next_x image",
+                width=300,
+                height=300,
+            ),
+        )
         with torch.no_grad():
             current_noisy_x = x + pad_dims_like(current_sigmas, x) * noise
+            current_noisy_x = current_noisy_x * mask + (1 - mask) * x
+
             current_x = model_forward_wrapper(
                 model,
                 current_noisy_x,
@@ -550,6 +575,19 @@ class ImprovedConsistencyTraining:
                 self.sigma_data,
                 self.sigma_min,
                 **kwargs,
+            )
+
+            viz.images(
+                vutils.make_grid(
+                    current_x.cpu(), normalize=True, nrow=int(x.shape[0] / 4)
+                ),
+                win="consistency_test2",
+                opts=dict(
+                    title="train_current_x image",
+                    caption="train_current_x image",
+                    width=300,
+                    height=300,
+                ),
             )
 
         loss_weights = pad_dims_like(improved_loss_weighting(sigmas)[timesteps], next_x)
@@ -582,7 +620,7 @@ class ConsistencySamplingAndEditing:
         mask: Optional[Tensor] = None,
         transform_fn: Callable[[Tensor], Tensor] = lambda x: x,
         inverse_transform_fn: Callable[[Tensor], Tensor] = lambda x: x,
-        start_from_y: bool = False,
+        start_from_y: bool = True,
         add_initial_noise: bool = True,
         clip_denoised: bool = False,
         verbose: bool = False,
@@ -637,7 +675,7 @@ class ConsistencySamplingAndEditing:
         y = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
         # For tasks like interpolation where noise will already be added in advance we
         # can skip the noising process
-        x = y + sigmas[0] * torch.randn_like(y) if add_initial_noise else y
+        x = y + sigmas[0] * torch.randn_like(y) * mask if add_initial_noise else y
         sigma = torch.full((x.shape[0],), sigmas[0], dtype=x.dtype, device=x.device)
         x = model_forward_wrapper(
             model, x, sigma, self.sigma_data, self.sigma_min, **kwargs
@@ -646,6 +684,18 @@ class ConsistencySamplingAndEditing:
             x = x.clamp(min=-1.0, max=1.0)
         x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
 
+        viz.images(
+            vutils.make_grid(
+                x.to(dtype=torch.float32), normalize=True, nrow=int(x.shape[0] / 4)
+            ),
+            win="consistency_test3",
+            opts=dict(
+                title="sampling x_T image",
+                caption="sampling x_T image",
+                width=500,
+                height=500,
+            ),
+        )
         # Progressively denoise the sample and skip the first step as it has already
         # been run
         pbar = tqdm(sigmas[1:], disable=(not verbose))
@@ -653,16 +703,57 @@ class ConsistencySamplingAndEditing:
             pbar.set_description(f"sampling (σ={sigma:.4f})")
 
             sigma = torch.full((x.shape[0],), sigma, dtype=x.dtype, device=x.device)
-            x = x + pad_dims_like(
-                (sigma**2 - self.sigma_min**2) ** 0.5, x
-            ) * torch.randn_like(x)
+            x = (
+                x
+                + pad_dims_like((sigma**2 - self.sigma_min**2) ** 0.5, x)
+                * torch.randn_like(x)
+                * mask
+            )
+
+            viz.images(
+                vutils.make_grid(
+                    x.to(dtype=torch.float32), normalize=True, nrow=int(x.shape[0] / 4)
+                ),
+                win="consistency_test4",
+                opts=dict(
+                    title="estimation x_t image",
+                    caption="estimation x_t image",
+                    width=500,
+                    height=500,
+                ),
+            )
             x = model_forward_wrapper(
                 model, x, sigma, self.sigma_data, self.sigma_min, **kwargs
+            )
+
+            viz.images(
+                vutils.make_grid(
+                    x.to(dtype=torch.float32), normalize=True, nrow=int(x.shape[0] / 4)
+                ),
+                win="consistency_test5",
+                opts=dict(
+                    title="function x_t image",
+                    caption="function x_t image",
+                    width=500,
+                    height=500,
+                ),
             )
             if clip_denoised:
                 x = x.clamp(min=-1.0, max=1.0)
             x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
 
+            viz.images(
+                vutils.make_grid(
+                    x.to(dtype=torch.float32), normalize=True, nrow=int(x.shape[0] / 4)
+                ),
+                win="consistency_test6",
+                opts=dict(
+                    title="final x_t image",
+                    caption="final x_t image",
+                    width=500,
+                    height=500,
+                ),
+            )
         return x
 
     def interpolate(
