@@ -672,10 +672,11 @@ class ConsistencySamplingAndEditing:
         x = y if start_from_y else torch.zeros_like(y)
 
         # Sample at the end of the schedule
-        y = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
+        # y = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
         # For tasks like interpolation where noise will already be added in advance we
         # can skip the noising process
-        x = y + sigmas[0] * torch.randn_like(y) * mask if add_initial_noise else y
+        x = y + sigmas[0] * torch.randn_like(y) if add_initial_noise else y
+        x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
         sigma = torch.full((x.shape[0],), sigmas[0], dtype=x.dtype, device=x.device)
         x = model_forward_wrapper(
             model, x, sigma, self.sigma_data, self.sigma_min, **kwargs
@@ -703,12 +704,9 @@ class ConsistencySamplingAndEditing:
             pbar.set_description(f"sampling (σ={sigma:.4f})")
 
             sigma = torch.full((x.shape[0],), sigma, dtype=x.dtype, device=x.device)
-            x = (
-                x
-                + pad_dims_like((sigma**2 - self.sigma_min**2) ** 0.5, x)
-                * torch.randn_like(x)
-                * mask
-            )
+            x = x + pad_dims_like(
+                (sigma**2 - self.sigma_min**2) ** 0.5, x
+            ) * torch.randn_like(x)
 
             viz.images(
                 vutils.make_grid(
@@ -722,6 +720,8 @@ class ConsistencySamplingAndEditing:
                     height=500,
                 ),
             )
+
+            x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
             x = model_forward_wrapper(
                 model, x, sigma, self.sigma_data, self.sigma_min, **kwargs
             )

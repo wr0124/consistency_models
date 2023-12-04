@@ -5,6 +5,6 @@ python3 improved_consistency.py  \
 --num_workers 12 \
 --max_steps 50000 \
 --devices 1 \
---sample_every_n_steps 1000 \
+--sample_every_n_steps 100 \
 #--train_continue
 
