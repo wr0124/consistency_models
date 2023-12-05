@@ -15,7 +15,7 @@ from typing import List
 from visdom import Visdom
 import torchvision.utils as vutils
 
-viz = Visdom(env="consistency_test")
+viz = Visdom(env="consistency_inpainting_pr")
 
 
 def timesteps_schedule(
@@ -539,7 +539,7 @@ class ImprovedConsistencyTraining:
 
         zero_tensor = torch.zeros_like(x)
         random_eraser = T.RandomErasing(
-            p=1, scale=(0.2, 0.4), ratio=(1.3, 3.3), value=1
+            p=1, scale=(0.2, 0.4), ratio=(1.3, 3.3), value=1, inplace=True
         )
         mask = random_eraser(zero_tensor)
 
@@ -671,10 +671,15 @@ class ConsistencySamplingAndEditing:
         # and interpolation where we want to use content from the reference sample
         x = y if start_from_y else torch.zeros_like(y)
 
+        #creat mask
+        mask_fill_one = T.RandomErasing(p=1.0, scale=(0.2, 0.2), ratio=(0.5, 0.5), value =1 )
+        zero_tensor = torch.zeros_like(x)
+        mask = mask_fill_one(zero_tensor)
         # Sample at the end of the schedule
-        # y = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
+        y = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
         # For tasks like interpolation where noise will already be added in advance we
         # can skip the noising process
+        y = y * (1-mask)
         x = y + sigmas[0] * torch.randn_like(y) if add_initial_noise else y
         x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
         sigma = torch.full((x.shape[0],), sigmas[0], dtype=x.dtype, device=x.device)
@@ -708,6 +713,7 @@ class ConsistencySamplingAndEditing:
                 (sigma**2 - self.sigma_min**2) ** 0.5, x
             ) * torch.randn_like(x)
 
+            x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
             viz.images(
                 vutils.make_grid(
                     x.to(dtype=torch.float32), normalize=True, nrow=int(x.shape[0] / 4)
@@ -721,7 +727,7 @@ class ConsistencySamplingAndEditing:
                 ),
             )
 
-            x = self.__mask_transform(x, y, mask, transform_fn, inverse_transform_fn)
+
             x = model_forward_wrapper(
                 model, x, sigma, self.sigma_data, self.sigma_min, **kwargs
             )

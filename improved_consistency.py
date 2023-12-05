@@ -39,7 +39,7 @@ import torchvision.utils as vutils
 
 from visdom import Visdom
 
-viz = Visdom(env="consistency_test")
+viz = Visdom(env="consistency_inpainting_pr")
 viz.line([0.0], [0.0], win="consis_loss", opts=dict(title="loss over time"))
 
 from options import parse_opts
@@ -543,29 +543,11 @@ class LitImprovedConsistencyModel(LightningModule):
         # option1 for sampling
         # self.ema_model.load_state_dict(self.model.state_dict())
         for sigmas in self.config.sampling_sigmas:
-            random_erasing = T.RandomErasing(
-                p=1.0, scale=(0.2, 0.5), ratio=(0.5, 0.5), value=0
-            )
-            masked_batch = random_erasing(batch)
-
-            viz.images(
-                vutils.make_grid(
-                    masked_batch.to(dtype=torch.float32), normalize=True, nrow=8
-                ),
-                win=f"masked_batch sigma {sigmas}",
-                opts=dict(
-                    title=f"masked_batch {sigmas}",
-                    caption=f"masked_batch {sigmas}",
-                    width=400,
-                    height=400,
-                ),
-            )
-            mask = torch.logical_not(batch == masked_batch)
+            
             samples = self.consistency_sampling(
                 self.model,
-                masked_batch,
+                batch,
                 sigmas,
-                mask=mask.to(dtype=torch.float32),
                 clip_denoised=True,
                 verbose=True,
             )  # Generated samples
