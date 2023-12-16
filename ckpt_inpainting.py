@@ -34,8 +34,8 @@ import torchvision.utils as vutils
 
 from visdom import Visdom
 
-viz = Visdom(env="consistency_test_inpainting")
 
+viz = Visdom(env="consistency_model_anime_face_lightning")
 
 from options import parse_opts
 

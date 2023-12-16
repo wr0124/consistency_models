@@ -39,7 +39,7 @@ import torchvision.utils as vutils
 
 from visdom import Visdom
 
-viz = Visdom(env="consistency_inpainting_pr")
+viz = Visdom(env="consistency_model_anime_face_lightning")
 viz.line([0.0], [0.0], win="consis_loss", opts=dict(title="loss over time"))
 
 from options import parse_opts
@@ -447,7 +447,7 @@ class LitImprovedConsistencyModelConfig:
     betas: Tuple[float, float] = (0.9, 0.995)
     lr_scheduler_start_factor: float = 1e-5
     lr_scheduler_iters: int = 10_000
-    sample_every_n_steps: int = 100
+    sample_every_n_steps: int = 1500
     num_samples: int = 32
     sampling_sigmas: Tuple[Tuple[int, ...], ...] = (
         (80,),
@@ -530,7 +530,6 @@ class LitImprovedConsistencyModel(LightningModule):
 
         # Ensure the number of samples does not exceed the batch size
         num_samples = min(self.config.num_samples, batch.shape[0])
-        noise = torch.randn_like(batch[:num_samples])
 
         # Log ground truth samples
         self.__log_images(
