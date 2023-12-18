@@ -98,18 +98,17 @@ class ImageDataModuleConfig:
 class ImageDataModule(LightningDataModule):
     def __init__(self, config: ImageDataModuleConfig) -> None:
         super().__init__()
-
         self.config = config
 
-    def setup(self, stage: str = None) -> None:
+    def train_dataloader(self) -> DataLoader:
         transform = T.Compose(
-            [
-                T.Resize(self.config.image_size),
-                T.RandomHorizontalFlip(),
-                T.ToTensor(),
-                T.Lambda(lambda x: (x * 2) - 1),
-            ]
-        )
+                [
+                    T.Resize(self.config.image_size),
+                    T.RandomHorizontalFlip(),
+                    T.ToTensor(),
+                    T.Lambda(lambda x: (x * 2) - 1),
+                    ]
+                )
         self.dataset = CustomImageFolder(
                 self.config.data_dir,
                 transform=transform,
@@ -117,16 +116,16 @@ class ImageDataModule(LightningDataModule):
                 mask_folder=args.data_dir+"/bbox/" ,    # Specify the folder for masks
                 )
 
-        def train_dataloader(self, shuffle: bool = True) -> DataLoader:
-            return DataLoader(
-                    self.dataset,
-                    batch_size=self.config.batch_size,
-                    shuffle=shuffle,
-                    num_workers=self.config.num_workers,
-                    pin_memory=self.config.pin_memory,
-                    persistent_workers=self.config.persistent_workers,
-                    worker_init_fn=worker_init_fn
-                    )
+
+        return DataLoader(
+                self.dataset,
+                batch_size=self.config.batch_size,
+                shuffle=True,
+                num_workers=self.config.num_workers,
+                pin_memory=self.config.pin_memory,
+                persistent_workers=self.config.persistent_workers,
+                worker_init_fn=worker_init_fn
+                )
 
 # LitUNet
 @dataclass
@@ -170,11 +169,31 @@ class LitImprovedConsistencyModel(LightningModule):
         self.ema_model = self.ema_model.eval()
 
     def training_step(self, batch: Union[Tensor, List[Tensor]], batch_idx: int) -> None:
-        if isinstance(batch, list):
-            batch = batch[0]
-
+        
+        images, masks = batch
+        binary_masks = (masks != -1).float() 
+        # viz.image(vutils.make_grid(images.cpu(), normalize=True, nrow= 2
+        #                            ),
+        #           win="images",
+        #           opts=dict(
+        #               title="images input ",
+        #               caption="images input",
+        #               width=300,
+        #               height=300,
+        #               ),
+        #           )
+        # viz.image(vutils.make_grid(binary_masks.cpu(), normalize=True, nrow= 2
+        #                            ),
+        #           win="masks",
+        #           opts=dict(
+        #               title="masks input ",
+        #               caption="masks input",
+        #               width=300,
+        #               height=300,
+        #               ),
+        #           )
         output = self.consistency_training(
-            self.model, batch, self.global_step, self.trainer.max_steps
+            self.model, images, self.global_step, self.trainer.max_steps, binary_masks
         )
 
         loss = (
@@ -212,16 +231,15 @@ class LitImprovedConsistencyModel(LightningModule):
         return [opt], [sched]
 
     @torch.no_grad()
-    def __sample_and_log_samples(self, batch: Union[Tensor, List[Tensor]]) -> None:
-        if isinstance(batch, list):
-            batch = batch[0]
-
+    def __sample_and_log_samples(self, batch: Union[Tensor, List[Tensor]] ) -> None:
+        images, masks=batch
+        binary_masks = (masks != -1).float()
         # Ensure the number of samples does not exceed the batch size
-        num_samples = min(self.config.num_samples, batch.shape[0])
+        num_samples = min(self.config.num_samples, images.shape[0])
 
         # Log ground truth samples
         self.__log_images(
-            batch[:num_samples].detach().clone(),
+            images[:num_samples].detach().clone(),
             "ground_truth",
             self.global_step,
             "ground_truth_window",
@@ -233,8 +251,9 @@ class LitImprovedConsistencyModel(LightningModule):
             
             samples = self.consistency_sampling(
                 self.model,
-                batch,
+                images,
                 sigmas,
+                binary_masks,
                 clip_denoised=True,
                 verbose=True,
             )  # Generated samples
@@ -401,7 +420,7 @@ training_config = TrainingConfig(
     consistency_training=ImprovedConsistencyTraining(final_timesteps=1280),
     consistency_sampling=ConsistencySamplingAndEditing(),
     lit_icm_config=LitImprovedConsistencyModelConfig(
-        sample_every_n_steps=args.sample_every_n_steps, lr_scheduler_iters=1000
+        sample_every_n_steps=args.sample_every_n_steps, lr_scheduler_iters=args.lr_scheduler_iters
     ),
     trainer=Trainer(
         max_steps=args.max_steps,
