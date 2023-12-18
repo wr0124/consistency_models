@@ -1,52 +1,17 @@
-import json
 import os
-
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+from typing import Tuple, Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, List, Optional, Tuple, Union
-import torch
+import json
+from torchinfo import summary
 
-torch.set_float32_matmul_precision("medium")
+import torch
+from torch.nn import functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from lightning import LightningDataModule, LightningModule, Trainer, seed_everything
-from lightning.pytorch.callbacks import LearningRateMonitor
-from lightning.pytorch.loggers import TensorBoardLogger
-from matplotlib import pyplot as plt
 from torch import Tensor, nn
-from torch.nn import functional as F
-from torch.utils.data import DataLoader
-from torchinfo import summary
-from torchvision import transforms as T
-from torchvision.datasets import ImageFolder
-from torchvision.utils import make_grid
-
-from consistency_models import (
-    ConsistencySamplingAndEditing,
-    ImprovedConsistencyTraining,
-    pseudo_huber_loss,
-)
-from consistency_models.utils import update_ema_model_
-
-from visdom import Visdom
-import numpy as np
-import torchvision.utils as vutils
-
-from visdom import Visdom
 
 
-viz = Visdom(env="consistency_model_anime_face_lightning")
-
-from options import parse_opts
-
-args = parse_opts()
-
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-
-
-# UNet
+# Modules
 def GroupNorm(channels: int) -> nn.GroupNorm:
     return nn.GroupNorm(num_groups=min(32, channels // 4), num_channels=channels)
 
@@ -192,6 +157,7 @@ class NoiseLevelEmbedding(nn.Module):
         return self.projection(h)
 
 
+# Unet
 @dataclass
 class UNetConfig:
     channels: int = 3
@@ -209,10 +175,11 @@ class UNetConfig:
 
 
 class UNet(nn.Module):
-    def __init__(self, config: UNetConfig) -> None:
+    def __init__(self, config: UNetConfig, checkpoint_dir: str = "") -> None:
         super().__init__()
 
         self.config = config
+        self.checkpoint_dir = checkpoint_dir
 
         self.input_projection = nn.Conv2d(
             config.channels,
@@ -397,105 +364,6 @@ class UNet(nn.Module):
         return model
 
 
-summary(UNet(UNetConfig()), input_size=((1, 3, 32, 32), (1,)))
-
-unet = UNet.from_pretrained(args.pretrained_model).eval().to(device=device, dtype=dtype)
-
-##dataset
-@dataclass
-class ImageDataModuleConfig:
-    data_dir: str
-    image_size: Tuple[int, int]
-    batch_size: int
-    num_workers: int
-    pin_memory: bool = True
-    persistent_workers: bool = True
+# summary(UNet(UNetConfig()), input_size=((1, 3, 32, 32), (1,)))
 
 
-class ImageDataModule(LightningDataModule):
-    def __init__(self, config: ImageDataModuleConfig) -> None:
-        super().__init__()
-
-        self.config = config
-
-    def setup(self, stage: str = None) -> None:
-        transform = T.Compose(
-            [
-                T.Resize(self.config.image_size),
-                T.RandomHorizontalFlip(),
-                T.ToTensor(),
-                T.Lambda(lambda x: (x * 2) - 1),
-            ]
-        )
-        self.dataset = ImageFolder(self.config.data_dir, transform=transform)
-
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.dataset,
-            batch_size=self.config.batch_size,
-            shuffle=True,
-            num_workers=self.config.num_workers,
-            pin_memory=self.config.pin_memory,
-            persistent_workers=self.config.persistent_workers,
-        )
-
-
-dm_config = ImageDataModuleConfig(
-    data_dir=args.data_dir,
-    image_size=tuple(args.image_size),
-    batch_size=args.batch_size,
-    num_workers=args.num_workers,
-)
-
-dm = ImageDataModule(dm_config)
-dm.setup()
-
-batch, _ = next(iter(dm.train_dataloader()))
-batch = batch.to(device=device, dtype=dtype)
-viz.images(
-    vutils.make_grid(batch.to(dtype=torch.float32), normalize=True),
-    nrow=1,
-    win="rescale_imag_grid",
-    opts=dict(title="Rescal_Imags_grid", caption="ReImags_grid", width=300, height=300),
-)
-
-# inpainting
-consistency_sampling_and_editing = ConsistencySamplingAndEditing()
-random_erasing = T.RandomErasing(
-    p=1.0, scale=(0.2, 0.5), ratio=(0.5, 0.5), inplace=True
-)
-masked_batch = random_erasing(batch)
-mask = torch.logical_not(batch == masked_batch)
-
-viz.images(
-    vutils.make_grid(masked_batch.to(dtype=torch.float32), normalize=True),
-    nrow=1,
-    win="masked_imag_grid",
-    opts=dict(
-        title="Rescale_MaskImags_grid",
-        caption="ReImags_Maskgrid",
-        width=300,
-        height=300,
-    ),
-)
-
-with torch.no_grad():
-    inpainted_batch = consistency_sampling_and_editing(
-        unet,
-        masked_batch,
-        sigmas=args.sampling_sigmas,  # Use more steps for better samples e.g 2-5l
-        mask=mask.to(dtype=dtype),
-        clip_denoised=True,
-        verbose=True,
-    )
-
-Inpaint = torch.cat((masked_batch, inpainted_batch), dim=0).float().cpu()
-
-viz.images(
-    vutils.make_grid(Inpaint.to(dtype=torch.float32), normalize=True),
-    nrow=1,
-    win="inpainting_imag_grid",
-    opts=dict(
-        title="Rescal_InImags_grid", caption="ReImags_Ingrid", width=300, height=300
-    ),
-)

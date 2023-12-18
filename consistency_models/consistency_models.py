@@ -14,8 +14,9 @@ from typing import List
 
 from visdom import Visdom
 import torchvision.utils as vutils
-
-viz = Visdom(env="consistency_model_anime_face_lightning")
+from options import parse_opts
+args = parse_opts()
+viz = Visdom(env=args.env)
 
 
 def timesteps_schedule(

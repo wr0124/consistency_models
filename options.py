@@ -60,4 +60,40 @@ def parse_opts():
         help="sampling noise level",
     )
 
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-4,
+        help="learning rate for optimazer",
+    )
+
+
+    parser.add_argument(
+        "--lr_scheduler_start_factor",
+        type=float,
+        default=1e-5,
+        help="learning rate ??",
+    )
+
+    parser.add_argument(
+        "--lr_scheduler_iters",
+        type=int,
+        default=10_000,
+        help="learning rate ??",
+    )
+
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=32,
+        help="number of samples for sampling",
+    )
+    
+    parser.add_argument(
+            "--env",
+            type=str,
+            default="consistency_model",
+            help="name for the visdom env"
+            )
+
     return parser.parse_args()
