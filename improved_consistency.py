@@ -282,10 +282,6 @@ class LitImprovedConsistencyModel(LightningModule):
         grid = make_grid(
             images.clamp(-1.0, 1.0), value_range=(-1.0, 1.0), normalize=True, nrow=8
         )
-
-        grid = grid.cpu().numpy()
-        if grid.min() < 0:
-            grid = (grid + 1) / 2
         width, height = window_size
         viz.images(
             grid,
@@ -362,8 +358,8 @@ def run_training(config: TrainingConfig) -> None:
     checkpoint_dir = config.model_ckpt_path
     unet_config = config.unet_config
     model = UNet(config.unet_config, os.path.join(checkpoint_dir, dataset_name))
-    ema_model = UNet(config.unet_config, os.path.join(checkpoint_dir, dataset_name))
-    ema_model.load_state_dict(model.state_dict())
+    #ema_model = UNet(config.unet_config, os.path.join(checkpoint_dir, dataset_name))
+    #ema_model.load_state_dict(model.state_dict())
 
     if config.resume_ckpt_path:
         checkpoint = torch.load(
@@ -381,7 +377,7 @@ def run_training(config: TrainingConfig) -> None:
         # Now try loading the adapted state dict
         model.load_state_dict(adapted_state_dict)
         # model.load_state_dict(state_dict)
-        ema_model.load_state_dict(adapted_state_dict)
+        #ema_model.load_state_dict(adapted_state_dict)
     else:
         logging.info("No checkpoint specified, starting training from scratch.")
 

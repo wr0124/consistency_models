@@ -535,7 +535,7 @@ class ImprovedConsistencyTraining:
         timesteps = lognormal_timestep_distribution(
             x.shape[0], sigmas, self.lognormal_mean, self.lognormal_std
         )
-        print( f"in consistency_model.py x shape is {x.shape}")
+        #print( f"in consistency_model.py x shape is {x.shape}")
         current_sigmas = sigmas[timesteps]
         next_sigmas = sigmas[timesteps + 1]
 
